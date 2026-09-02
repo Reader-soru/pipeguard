@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PipeGuard — Subsea Pipeline Integrity Digital Twin</title>
+  <meta name="description" content="Real-time subsea pipeline integrity monitoring system with NPW leak localization, digital twin visualization, and automated isolation response. TWI IMECE India 2026.">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- PipeGuard design system -->
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══════════════════════════════════════════════════
+       TOP BAR
+  ════════════════════════════════════════════════════ -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <img src="/static/logo.png" alt="PipeGuard Logo" class="topbar-logo">
+      <div class="brand-group">
+        <span class="brand-name">PipeGuard</span>
+        <span class="brand-sub">Subsea Integrity Digital Twin</span>
+      </div>
+    </div>
+
+    <nav class="topbar-nav" id="topbarNav">
+      <button class="nav-tab active" data-page="control-room" id="tabControlRoom">Control Room</button>
+      <button class="nav-tab" data-page="corridor-map"  id="tabCorridorMap">Corridor Map</button>
+      <div class="nav-underline" id="navUnderline"></div>
+    </nav>
+
+    <div class="topbar-right">
+      <button class="icon-btn" id="btnAudioToggle" title="Toggle Subsea Hydrophone & Mechanical SFX" aria-label="Toggle audio">🔇</button>
+      <div class="live-pill"><span class="live-dot"></span>LIVE</div>
+      <button class="icon-btn" id="btnSettings" title="Settings" aria-label="Open settings">⚙</button>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════════════════
+       PAGE 1 — CONTROL ROOM
+  ════════════════════════════════════════════════════ -->
+  <div class="page" id="page-control-room">
+
+    <!-- Process Stepper -->
+    <div class="process-stepper" id="processStepper">
+      <div class="stepper-step" id="step-detect">
+        <span class="step-node"></span><span>Detect</span>
+      </div>
+      <span class="stepper-arrow">→</span>
+      <div class="stepper-step" id="step-analyze">
+        <span class="step-node"></span><span>Analyze</span>
+      </div>
+      <span class="stepper-arrow">→</span>
+      <div class="stepper-step" id="step-localize">
+        <span class="step-node"></span><span>Localize</span>
+      </div>
+      <span class="stepper-arrow">→</span>
+      <div class="stepper-step" id="step-visualize">
+        <span class="step-node"></span><span>Visualize</span>
+      </div>
+      <span class="stepper-arrow">→</span>
+      <div class="stepper-step" id="step-respond">
+        <span class="step-node"></span><span>Respond</span>
+      </div>
+    </div>
+
+    <!-- Scenario / Playback Controls -->
+    <div class="controls-bar">
+      <span class="ctrl-label">Scenario:</span>
+      <select id="scenarioSelect" class="styled-select" aria-label="Select evaluation scenario">
+        <option value="BLIND_01">BLIND_01 — Evaluation 1</option>
+        <option value="BLIND_02">BLIND_02 — Evaluation 2</option>
+        <option value="BLIND_03">BLIND_03 — Evaluation 3</option>
+        <option value="BLIND_04">BLIND_04 — Evaluation 4</option>
+        <option value="BLIND_05">BLIND_05 — Evaluation 5</option>
+        <option value="BLIND_06">BLIND_06 — Evaluation 6</option>
+        <option value="BLIND_07">BLIND_07 — No-Leak Control</option>
+        <option value="UPLOAD_CSV">⬆ Upload Custom CSV...</option>
+      </select>
+      <input type="file" id="csvFileInput" accept=".csv" style="display: none;">
+      <div class="ctrl-divider"></div>
+      <button class="btn btn-primary" id="btnPlayPause">▶ Play</button>
+      <button class="btn btn-secondary" id="btnReset">↺ Reset</button>
+      <div class="ctrl-divider"></div>
+      <span class="ctrl-label">Speed:</span>
+      <div class="speed-group">
+        <button class="btn-speed active" data-speed="1"  id="spd1">1×</button>
+        <button class="btn-speed"        data-speed="2"  id="spd2">2×</button>
+        <button class="btn-speed"        data-speed="5"  id="spd5">5×</button>
+        <button class="btn-speed"        data-speed="99" id="spdMax">MAX</button>
+      </div>
+      <div class="ctrl-divider"></div>
+      <button class="btn btn-accent" id="btnJuryEval">⚡ Run Jury Suite</button>
+      <button class="btn btn-secondary" id="btnDetailedLog" title="View Detailed Scenario Event & Telemetry Log">📋 Detailed Log</button>
+    </div>
+
+    <!-- Dashboard grid -->
+    <div class="dashboard-grid">
+
+      <!-- ── VECTOR B: Digital Twin Canvas ─────────────── -->
+      <section class="vector-b" aria-label="Vector B Digital Twin">
+        <div class="panel-hdr">
+          <h2>Vector B — Digital Twin</h2>
+          <span class="panel-badge badge-tech" id="twinSegBadge">3D Transient Flow · 5 × 2 km Segments</span>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="pipelineTwinCanvas"></canvas>
+          <div class="canvas-overlay">
+            <div class="time-readout">
+              Obs: <strong id="timeReadout">0.00s</strong> / 12.0s
+            </div>
+            <div class="iso-badge open" id="twinValveBadge">GATE: OPEN</div>
+          </div>
+          <div class="custom-config-tag hidden" id="customConfigTag">⚠ Custom config</div>
+        </div>
+      </section>
+
+      <!-- ── VECTOR A: Edge Telemetry (exact width of above pipe) ── -->
+      <section class="vector-a" aria-label="Vector A Edge Telemetry">
+        <div class="panel-hdr">
+          <h2>Vector A — Edge Telemetry Stream</h2>
+          <span class="panel-badge badge-tech">Inlet vs Outlet Pressure · 100ms Transients</span>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="pressureChart"></canvas>
+        </div>
+      </section>
+
+      <!-- ── VECTOR C: NPW Localization HUD (Right rail full height, no-scroll instrument panel) ── -->
+      <section class="vector-c" aria-label="Vector C NPW HUD">
+        <div class="panel-hdr">
+          <h2>Vector C — NPW Localization</h2>
+          <span class="panel-badge badge-math">Negative Pressure Wave</span>
+        </div>
+
+        <!-- NPW Formula Compact Header -->
+        <div class="hud-formula">
+          <div class="formula-row-flex">
+            <div class="formula-left">
+              <span class="formula-name">NPW Localization Equation</span>
+              <div class="formula-eq">
+                X =
+                <span class="frac">
+                  <span class="fnum">L − (C × Δt)</span>
+                  <span class="fden">2</span>
+                </span>
+              </div>
+            </div>
+            <div class="formula-consts">
+              <span>L = 10,000 m &nbsp;|&nbsp; C = 1,000 m/s</span>
+              <span>Δt = t<sub>out</sub> − t<sub>in</sub></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2-Column Dense Grid of Metrics -->
+        <div class="hud-fields">
+          <!-- Row 1: Hero Calculated X + Segment Badge (spans full width) -->
+          <div class="hud-hero-card">
+            <div class="hud-hero-left">
+              <span class="hud-lbl">Calculated X</span>
+              <span class="hud-hero-val muted" id="hudX">— m</span>
+            </div>
+            <div class="hud-seg-badge seg-b-none" id="hudSegBadge">No leak detected</div>
+          </div>
+
+          <!-- Row 2: Distance from Inlet & Distance from Outlet -->
+          <div class="hud-card hud-card-dist">
+            <span class="hud-lbl">↔ From Inlet</span>
+            <span class="hud-val muted" id="hudDistance">— m</span>
+          </div>
+
+          <div class="hud-card hud-card-dist-out">
+            <span class="hud-lbl">↔ From Outlet</span>
+            <span class="hud-val muted" id="hudDistanceOut">— m</span>
+          </div>
+
+          <div class="hud-card hud-card-dt" id="hudCardDt">
+            <span class="hud-lbl">Δt = T-OUT − T-IN</span>
+            <span class="hud-val muted" id="hudDt">— s</span>
+          </div>
+
+          <!-- Row 3: T-IN & T-OUT -->
+          <div class="hud-card">
+            <span class="hud-lbl">T-IN</span>
+            <span class="hud-val muted" id="hudTIn">— s</span>
+          </div>
+
+          <div class="hud-card">
+            <span class="hud-lbl">T-OUT</span>
+            <span class="hud-val muted" id="hudTOut">— s</span>
+          </div>
+
+          <!-- Row 4: Inlet Baseline & Outlet Baseline -->
+          <div class="hud-card">
+            <span class="hud-lbl">Inlet Baseline</span>
+            <span class="hud-val" id="hudInBase">— Bar</span>
+          </div>
+
+          <div class="hud-card">
+            <span class="hud-lbl">Outlet Baseline</span>
+            <span class="hud-val" id="hudOutBase">— Bar</span>
+          </div>
+
+          <!-- Row 5: σ Noise Level & Noise Difference -->
+          <div class="hud-card">
+            <span class="hud-lbl">σ Noise Level</span>
+            <span class="hud-val muted" id="hudNoise">— Bar</span>
+          </div>
+
+          <div class="hud-card">
+            <span class="hud-lbl">Noise Difference</span>
+            <span class="hud-val muted" id="hudNoiseDiff">— Bar</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Segment health strip ───────────────────────── -->
+      <div class="seg-strip" id="segStrip" aria-label="Segment health summary">
+        <div class="seg-chip healthy" id="segChip1" role="button" tabindex="0" aria-label="Segment 1 health">
+          <span class="chip-dot">✓</span>
+          <span>S1 · 0–1.99 km</span>
+          <span class="chip-state">Healthy</span>
+        </div>
+        <div class="seg-chip healthy" id="segChip2" role="button" tabindex="0" aria-label="Segment 2 health">
+          <span class="chip-dot">✓</span>
+          <span>S2 · 2–3.99 km</span>
+          <span class="chip-state">Healthy</span>
+        </div>
+        <div class="seg-chip healthy" id="segChip3" role="button" tabindex="0" aria-label="Segment 3 health">
+          <span class="chip-dot">✓</span>
+          <span>S3 · 4–5.99 km</span>
+          <span class="chip-state">Healthy</span>
+        </div>
+        <div class="seg-chip healthy" id="segChip4" role="button" tabindex="0" aria-label="Segment 4 health">
+          <span class="chip-dot">✓</span>
+          <span>S4 · 6–7.99 km</span>
+          <span class="chip-state">Healthy</span>
+        </div>
+        <div class="seg-chip healthy" id="segChip5" role="button" tabindex="0" aria-label="Segment 5 health">
+          <span class="chip-dot">✓</span>
+          <span>S5 · 8–10 km</span>
+          <span class="chip-state">Healthy</span>
+        </div>
+      </div>
+
+    </div><!-- /dashboard-grid -->
+  </div><!-- /page-control-room -->
+
+  <!-- ═══════════════════════════════════════════════════
+       PAGE 2 — CORRIDOR MAP
+  ════════════════════════════════════════════════════ -->
+  <div class="page hidden" id="page-corridor-map" aria-label="Corridor Map — Visakhapatnam to Chennai">
+
+    <!-- Left Rail: FROM / TO + Pipeline Stats -->
+    <div class="map-sidebar">
+
+      <!-- Pipeline Identity -->
+      <div class="map-sb-hdr">
+        <div class="map-sb-title">Pipeline Corridor</div>
+        <div class="map-sb-sub">Bay of Bengal Subsea · 661.3 km</div>
+      </div>
+
+      <!-- FROM Node -->
+      <div class="map-endpoint-card map-from-card">
+        <div class="map-ep-dot map-ep-dot-from">IN</div>
+        <div class="map-ep-info">
+          <div class="map-ep-label">FROM — INLET</div>
+          <div class="map-ep-name" id="mapFromName">Visakhapatnam</div>
+          <div class="map-ep-coord" id="mapFromCoord">17.6868°N, 83.2185°E</div>
+          <div class="map-ep-dist">0.0 km — Pipeline Start</div>
+        </div>
+      </div>
+
+      <!-- Pipeline line visual -->
+      <div class="map-route-line">
+        <div class="map-route-seg" id="mapSeg1"><span>S1</span><span>0–132.3 km</span></div>
+        <div class="map-route-seg" id="mapSeg2"><span>S2</span><span>132.3–264.5 km</span></div>
+        <div class="map-route-seg" id="mapSeg3"><span>S3</span><span>264.5–396.8 km</span></div>
+        <div class="map-route-seg" id="mapSeg4"><span>S4</span><span>396.8–529.0 km</span></div>
+        <div class="map-route-seg" id="mapSeg5"><span>S5</span><span>529.0–661.3 km</span></div>
+      </div>
+
+      <!-- TO Node -->
+      <div class="map-endpoint-card map-to-card">
+        <div class="map-ep-dot map-ep-dot-to">OUT</div>
+        <div class="map-ep-info">
+          <div class="map-ep-label">TO — OUTLET</div>
+          <div class="map-ep-name" id="mapToName">Chennai</div>
+          <div class="map-ep-coord" id="mapToCoord">13.0827°N, 80.2707°E</div>
+          <div class="map-ep-dist">661.3 km — Pipeline End</div>
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="map-sb-divider"></div>
+
+      <!-- Leak Status Card -->
+      <div class="map-leak-status" id="mapLeakStatus">
+        <div class="map-lk-hdr">Leak Localization</div>
+        <div class="map-lk-row">
+          <span class="map-lk-lbl">Status</span>
+          <span class="map-lk-val" id="mapLkState">Monitoring…</span>
+        </div>
+        <div class="map-lk-row">
+          <span class="map-lk-lbl">↔ From Inlet</span>
+          <span class="map-lk-val cyan" id="mapLkFromInlet">—</span>
+        </div>
+        <div class="map-lk-row">
+          <span class="map-lk-lbl">↔ From Outlet</span>
+          <span class="map-lk-val orange" id="mapLkFromOutlet">—</span>
+        </div>
+        <div class="map-lk-row">
+          <span class="map-lk-lbl">Segment</span>
+          <span class="map-lk-val" id="mapLkSeg">—</span>
+        </div>
+      </div>
+
+      <p class="map-caption">Real coastal corridor between Visakhapatnam &amp; Chennai (661.3 km). Transient NPW telemetry mapped proportionally along the route.</p>
+    </div>
+
+    <!-- Map Main Content: Leaflet Map + Bathymetry Cross-Section -->
+    <div class="map-main-area">
+      <div id="map-container"></div>
+      
+      <!-- Subsea Bathymetry Depth Profile -->
+      <div class="bathymetry-dock" id="bathymetryDock">
+        <div class="bathy-hdr">
+          <div class="bathy-title-group">
+            <span class="bathy-icon">🌊</span>
+            <span class="bathy-title">Subsea Bathymetry Cross-Section · Bay of Bengal Route (Visakhapatnam Shelf → KG Basin → Chennai)</span>
+          </div>
+          <div class="bathy-meta">
+            <span class="bathy-tag" id="bathyDepthTag">Trench Depth: -2,400 m</span>
+            <span class="bathy-tag cyan" id="bathyRuptureDepth">Rupture Seabed: Normal</span>
+          </div>
+        </div>
+        <div class="bathy-canvas-wrap">
+          <canvas id="bathymetryCanvas"></canvas>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+
+
+  <!-- ═══════════════════════════════════════════════════
+       SETTINGS DRAWER
+  ════════════════════════════════════════════════════ -->
+  <div class="drawer-backdrop hidden" id="settingsBackdrop" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="settings-drawer">
+      <div class="drawer-hdr">
+        <span class="drawer-title">Settings</span>
+        <button class="drawer-x" id="drawerClose" aria-label="Close settings">×</button>
+      </div>
+      <div class="drawer-body">
+        <div class="drawer-field">
+          <label class="drawer-lbl" for="settingSegments">Segments</label>
+          <input class="drawer-input" id="settingSegments" type="number" min="1" max="20" value="5">
+        </div>
+        <div class="drawer-field">
+          <label class="drawer-lbl" for="settingLength">Pipeline Length (m)</label>
+          <input class="drawer-input" id="settingLength" type="number" min="100" max="100000" value="10000">
+        </div>
+        <div class="drawer-field">
+          <label class="drawer-lbl" for="settingWaveSpeed">Wave Speed C (m/s)</label>
+          <input class="drawer-input" id="settingWaveSpeed" type="number" min="100" max="5000" value="1000">
+        </div>
+        <div class="drawer-field">
+          <label class="drawer-lbl">Segment Length (auto-calculated)</label>
+          <div class="drawer-derived" id="derivedSegLen">2,000 m per segment</div>
+        </div>
+        <div class="nonstandard-warn" id="nonstandardWarn">
+          <strong>⚠ Non-standard configuration</strong>
+          Values differ from competition spec (5 segments / 10,000 m / C = 1,000 m/s) — for demo / testing only.
+        </div>
+      </div>
+      <div class="drawer-footer">
+        <button class="btn btn-secondary" id="btnResetSettings">Reset to competition spec</button>
+        <button class="btn btn-primary"   id="btnApplySettings">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       WATCHKEEPER FAB + PANEL
+  ════════════════════════════════════════════════════ -->
+  <button class="wk-fab" id="wkFab" aria-label="Open Watchkeeper AI assistant" title="Watchkeeper">
+    ⚓
+  </button>
+  <div class="wk-panel hidden" id="wkPanel" role="dialog" aria-modal="true" aria-label="Watchkeeper AI assistant">
+    <div class="wk-hdr">
+      <div>
+        <div class="wk-title">Watchkeeper</div>
+        <div class="wk-sub">Ask about Δt, segments, or this dashboard.</div>
+      </div>
+      <button class="wk-close" id="wkClose" aria-label="Close Watchkeeper">×</button>
+    </div>
+    <div class="wk-messages" id="wkMessages">
+      <div class="wk-bubble bot">
+        Welcome aboard. I'm Watchkeeper — I monitor this system with you.<br>
+        Ask me about the NPW formula, Δt, detected segments, or any metric on screen.
+      </div>
+    </div>
+    <div class="wk-input-row">
+      <input class="wk-input" id="wkInput" type="text" placeholder="Type a question…" autocomplete="off" aria-label="Watchkeeper input">
+      <button class="wk-send" id="wkSend" aria-label="Send message">➤</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       JURY EVALUATION MODAL
+  ════════════════════════════════════════════════════ -->
+  <div class="modal-backdrop hidden" id="juryModal" role="dialog" aria-modal="true" aria-label="Jury Evaluation Suite">
+    <div class="modal-box">
+      <div class="modal-hdr">
+        <h3>⚡ Jury Evaluation Suite — BLIND_01 to BLIND_07</h3>
+        <button class="modal-close" id="btnCloseModal" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          Executing the exact same edge analytics and NPW localization algorithm across all 7 evaluation sheets without pre-baked answers or hard-coded coordinates. Each scenario is independently processed.
+        </p>
+        <div class="table-wrap">
+          <table class="jury-table">
+            <thead>
+              <tr>
+                <th>Scenario</th>
+                <th>Status</th>
+                <th>t<sub>in</sub> (s)</th>
+                <th>t<sub>out</sub> (s)</th>
+                <th>Δt (s)</th>
+                <th>Calculated X (m)</th>
+                <th>Segment</th>
+                <th>Isolation</th>
+                <th>Verification</th>
+              </tr>
+            </thead>
+            <tbody id="juryTableBody">
+              <tr>
+                <td colspan="9" style="text-align:center; padding:24px; color: var(--text-muted);">
+                  Click "Run Jury Suite" to evaluate…
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       DETAILED SCENARIO EVENT LOG MODAL
+  ════════════════════════════════════════════════════ -->
+  <div class="modal-backdrop hidden" id="detailedLogModal" role="dialog" aria-modal="true" aria-label="Detailed Scenario Event Log">
+    <div class="modal-box modal-box-wide">
+      <div class="modal-hdr">
+        <div class="modal-hdr-left">
+          <h3>📋 Scenario Audit Log & Telemetry Sequence</h3>
+          <span class="modal-scenario-badge" id="logModalScenarioBadge">BLIND_01</span>
+        </div>
+        <div class="modal-hdr-actions">
+          <button class="btn btn-sm btn-accent" id="btnExportPDF" title="Export Formal Incident Audit Report (PDF / Print)">📄 Export Incident Report</button>
+          <button class="btn btn-sm btn-secondary" id="btnCopyLog" title="Copy text log to clipboard">📋 Copy Log</button>
+          <button class="btn btn-sm btn-secondary" id="btnDownloadLog" title="Export text log">💾 Export .txt</button>
+          <button class="modal-close" id="btnCloseLogModal" aria-label="Close">×</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <!-- Summary Cards Strip -->
+        <div class="log-summary-grid">
+          <div class="log-stat-card">
+            <span class="log-stat-lbl">Detection Status</span>
+            <span class="log-stat-val" id="logStatStatus">—</span>
+          </div>
+          <div class="log-stat-card">
+            <span class="log-stat-lbl">Inlet Arrival (t_in)</span>
+            <span class="log-stat-val" id="logStatTIn">—</span>
+          </div>
+          <div class="log-stat-card">
+            <span class="log-stat-lbl">Outlet Arrival (t_out)</span>
+            <span class="log-stat-val" id="logStatTOut">—</span>
+          </div>
+          <div class="log-stat-card">
+            <span class="log-stat-lbl">Transit Delta (Δt)</span>
+            <span class="log-stat-val" id="logStatDt">—</span>
+          </div>
+          <div class="log-stat-card highlight">
+            <span class="log-stat-lbl">Calculated X</span>
+            <span class="log-stat-val" id="logStatX">—</span>
+          </div>
+          <div class="log-stat-card">
+            <span class="log-stat-lbl">Assigned Segment</span>
+            <span class="log-stat-val" id="logStatSeg">—</span>
+          </div>
+        </div>
+
+        <!-- Formula Callout Box -->
+        <div class="log-formula-callout" id="logFormulaCallout">
+          <div class="callout-title">NPW Formula Resolution & Telemetry Derivation</div>
+          <div class="callout-eq" id="logCalloutEq">X = (10,000 − 1,000 × Δt) / 2</div>
+        </div>
+
+        <!-- Detailed Chronological Events Table -->
+        <div class="log-detail-section">
+          <div class="section-hdr-row">
+            <h4>Chronological Sequence of Events & Edge Telemetry</h4>
+            <span class="text-muted-sm" id="logEventCountBadge">7 Events</span>
+          </div>
+          <div class="table-wrap">
+            <table class="jury-table log-table">
+              <thead>
+                <tr>
+                  <th style="width: 85px;">Time</th>
+                  <th style="width: 175px;">Event Type</th>
+                  <th>Description & Physics Action</th>
+                  <th style="width: 100px;">State</th>
+                </tr>
+              </thead>
+              <tbody id="detailedLogTableBody">
+                <!-- Injected via main.js -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Raw Terminal Event Stream -->
+        <div class="raw-console-section">
+          <div class="section-hdr-row">
+            <h4>Raw Terminal Event Stream</h4>
+          </div>
+          <pre class="raw-log-console" id="rawLogConsoleText">[0.0s] System initialized.</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<!-- Leaflet JS (must load before main.js) -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/main.js"></script>
+</body>
+</html>

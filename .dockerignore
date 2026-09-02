@@ -1,0 +1,9 @@
+.venv
+__pycache__
+.pytest_cache
+*.mp4
+*.pdf
+.git
+.gitignore
+*.pyc
+.env
